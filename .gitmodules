@@ -1,0 +1,6 @@
+[submodule "tiktoken"]
+	path = tiktoken
+	url = git@github.com:GabrielTofvesson/tiktoken.git
+[submodule "OpenAI-Rust"]
+	path = OpenAI-Rust
+	url = git@github.com:GabrielTofvesson/OpenAI-Rust.git

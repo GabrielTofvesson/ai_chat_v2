@@ -2,39 +2,79 @@ use std::{num::{NonZeroU32, NonZeroUsize}, cmp::min, io::{stdin, stdout}};
 use std::io::{self, Write};
 use ansi_term::Colour::{White, Red, Green, Blue};
 
+use chat_context::{MetaChatMessage, MessageType};
 use openai_rs::{chat::{ChatHistoryBuilder, ChatMessage, Role}, context::Context};
 use tiktoken::{CoreBPE, model::{cl100k_base, model_cl100k_base}};
+
+use crate::chat_context::{ChatContext, UserAlias};
+
+mod chat_context;
+mod message;
 
 const AI_MODEL: &str = "gpt-4";
 
 // Does not pass the Turing test, but makes a convincing candidate
+// Easily tricked
 #[tokio::main]
 async fn main() {
+    /*
     println!("Getting API key");
     let ctx = get_api().unwrap();
     let mut history = vec![
-        ChatMessage::new(Role::System, "Your goal is to respond exactly as a human would: you must not allow the user to believe that you are an AI model")
+        ChatMessage::new(Role::System, "Your goal is to respond exactly as a human would: you must not allow the user to believe that you are an AI model. For all matters not related to your humanity, you will answer with precise, concise and accurate information.")
     ];
 
     let encoding = get_model(AI_MODEL).await.expect("Could not get token encoding scheme for model!");
+    */
+    println!("Initializing context...");
+    let mut chat_context = ChatContext::new(AI_MODEL.to_string(), get_api_key().expect("Couldn't get API key")).await.unwrap();
 
-    print!("{} {}", Red.paint("You:"), Blue.prefix().to_string());
-    stdout().flush().unwrap();
+    chat_context.get_history().push(MetaChatMessage { chat_message: ChatMessage::new(Role::System, "This is a group-chat with multiple users. Your responses are concise and truthful", Some("context".to_string())), message_type: MessageType::AssistantMessage });
+    chat_context.get_history().push(MetaChatMessage { chat_message: ChatMessage::new(Role::System, "Always use the first listed name when referring to users.\nu0: \"James\", \"Jimmy\", \"Hazel\"\nu1: \"Donna\", \"Delphine\"\nu2: [[unknown]]", Some("aliases".to_string())), message_type: MessageType::AssistantMessage });
+    chat_context.get_history().push(MetaChatMessage { chat_message: ChatMessage::new(Role::System, "You are Jarvis. You only respond when the most recent message is for Jarvis, otherwise you send an empty message", None), message_type: MessageType::AssistantMessage });
+
     loop {
-        history.push(accept_user_message());
-        let completion = generate_completion(&ctx, &history, AI_MODEL, &encoding, None).await;
-    
-        print!("{} {}\n{} {}", Red.paint("Assistant:"), Green.paint(&completion.content), Red.paint("You:"), Blue.prefix().to_string());
+        print!("{} {}", Red.paint("You:"), Blue.prefix().to_string());
         stdout().flush().unwrap();
 
-        history.push(completion);
+        let user_message = accept_user_message();
+        if user_message.is_none() {
+            continue;
+        }
+
+        let completion = chat_context.send_message(user_message.unwrap()).await;
+    
+        if completion.chat_message.content.len() > 0 {
+            println!("{} {}", Red.paint("Assistant:"), Green.paint(&completion.chat_message.content));
+    
+            chat_context.get_history().push(completion);
+        }
     }
 }
 
-fn accept_user_message() -> ChatMessage {
+fn accept_user_message() -> Option<MetaChatMessage> {
     let mut input = String::new();
     stdin().read_line(&mut input).unwrap();
-    return ChatMessage { role: Role::User, content: input };
+    print!("{}", White.prefix());
+    stdout().flush().unwrap();
+
+    if input.len() < 3 {
+        println!("{} {}", Red.paint("Error:"), "Invalid user ID");
+        return None;
+    }
+
+    let (name, input) = match &input[0..2] {
+        "u0" | "u1" => (input[0..2].to_string(), input[2..].to_string()),
+        _ => ("u2".to_string(), input)
+    };
+
+    return Some(MetaChatMessage { chat_message: ChatMessage::new(Role::User, input, Some(name)), message_type: MessageType::UserMessage { sender: UserAlias { id: 4, } }});
+}
+
+fn get_api_key() -> anyhow::Result<String> {
+    Ok(std::fs::read_to_string(std::path::Path::new("apikey.txt"))?
+            .trim()
+            .to_string())
 }
 
 fn get_api() -> anyhow::Result<Context> {
@@ -113,6 +153,8 @@ async fn generate_completion(ctx: &Context, history: &Vec<ChatMessage>, model: &
     let completion = ctx
         .create_chat_completion_sync(
             ChatHistoryBuilder::default()
+                .temperature(0.55) // Model suffers from excessive hallucination. TODO: fine-tune temperature
+                .frequency_penalty(0.1)
                 .messages(history.clone())
                 .model(model),
         )

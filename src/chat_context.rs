@@ -1,4 +1,4 @@
-use std::{error::Error, ops::Add};
+use std::{error::Error};
 
 use openai_rs::{chat::{ChatMessage, Role, ChatHistoryBuilder}, context::Context, edits::EditRequestBuilder};
 use tiktoken::{CoreBPE, model::{model_cl100k_base, cl100k_base}};
